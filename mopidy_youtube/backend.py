@@ -95,12 +95,20 @@ def search_youtube(q):
         'q': q,
         'key': yt_key
     }
-    result = session.get(yt_api_endpoint + 'search', params=query)
+    result = session.get(yt_api_endpoint+'search', params=query)
     data = result.json()
+    playlist = []
 
-    resolve_pool = ThreadPool(processes=16)
-    playlist = [item['id']['videoId'] for item in data['items']]
+    if 'error' in data.keys():
+        logger.error(data['error']['message'])
+        return []
 
+    for item in data['items']:
+        if item['id']['kind'] == 'youtube#video':
+            playlist.append(item['id']['videoId'])
+
+    num_proc = len(playlist) + 1
+    resolve_pool = ThreadPool(processes=num_proc)
     playlist = resolve_pool.map(resolve_url, playlist)
     resolve_pool.close()
     return [item for item in playlist if item]
@@ -151,13 +159,13 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
         if 'yt:' in track:
             track = track.replace('yt:', '')
 
-        if 'youtube.com' in track:
+        if 'youtube.com' in track or 'youtu.be' in track:
             url = urlparse(track)
             req = parse_qs(url.query)
             if 'list' in req:
                 return resolve_playlist(req.get('list')[0])
-            else:
-                return [item for item in [resolve_url(track)] if item]
+
+            return [item for item in [resolve_url(track)] if item]
         else:
             return [item for item in [resolve_track(track)] if item]
 
@@ -177,13 +185,13 @@ class YouTubeLibraryProvider(backend.LibraryProvider):
                         uri=search_uri,
                         tracks=resolve_playlist(req.get('list')[0])
                     )
-                else:
-                    logger.info(
-                        "Resolving YouTube for track '%s'", search_query)
-                    return SearchResult(
-                        uri=search_uri,
-                        tracks=[t for t in [resolve_url(search_query)] if t]
-                    )
+
+                logger.info(
+                    "Resolving YouTube for track '%s'", search_query)
+                return SearchResult(
+                    uri=search_uri,
+                    tracks=[t for t in [resolve_url(search_query)] if t]
+                )
         else:
             search_query = ' '.join(query.values()[0])
             logger.info("Searching YouTube for query '%s'", search_query)
@@ -197,7 +205,4 @@ class YouTubePlaybackProvider(backend.PlaybackProvider):
 
     def translate_uri(self, uri):
         track = resolve_track(uri, True)
-        if track is not None:
-            return track.uri
-        else:
-            return None
+        return track.uri
